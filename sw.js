@@ -1,5 +1,5 @@
 /* Service worker: la app abre sin conexión. Cambia VERSION al publicar una versión nueva. */
-const VERSION = "alm-v1.0.0";
+const VERSION = "alm-v1.0.2";
 const SHELL = ["./", "index.html", "styles.css", "config.js", "demo.js", "core.js", "views.js", "manifest.webmanifest",
                "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", (e) => {

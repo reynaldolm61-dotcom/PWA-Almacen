@@ -120,8 +120,18 @@
     const go = async () => {
       const b = document.getElementById('lg-badge').value.trim(), p = document.getElementById('lg-pin').value.trim(), e = document.getElementById('lg-err'), btn = document.getElementById('lg-go');
       e.textContent = ''; btn.disabled = true; btn.textContent = 'Entrando…';
-      try { const r = await Alm.login(b, p); if (!r.ok) e.textContent = r.error; else { S.view = 'catalogo'; Alm.render(); } }
-      catch (x) { e.textContent = S.online ? 'No se pudo conectar con el servidor.' : 'Sin conexión: necesitas red para entrar la primera vez.'; }
+      let r = null;
+      try { r = await Alm.login(b, p); }
+      catch (x) {
+        console.error(x);
+        e.textContent = !S.online ? 'Sin conexión: necesitas red para entrar la primera vez.'
+          : (x && x.name === 'BadResponse') ? x.message
+          : 'No se pudo conectar con el servidor (' + ((x && x.name) || 'error') + (x && x.message ? ': ' + x.message : '') + '). URL usada: ' + String(Alm.cfg.API_URL).slice(0, 60) + '…';
+      }
+      if (r) {
+        if (!r.ok) e.textContent = r.error;
+        else { try { S.view = 'catalogo'; Alm.render(); } catch (rx) { console.error(rx); e.textContent = 'Entraste bien, pero falló al mostrar la pantalla: ' + rx.message; S.session = S.session; } }
+      }
       btn.disabled = false; btn.textContent = 'Entrar';
     };
     document.getElementById('lg-go').onclick = go;

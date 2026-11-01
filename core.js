@@ -54,11 +54,15 @@
     const t = setTimeout(() => ctl.abort(), 30000);
     try {
       const r = await fetch(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctl.signal, redirect: 'follow' });
-      return await r.json();
+      const txt = await r.text();
+      try { return JSON.parse(txt); } catch (e) {
+        const err = new Error('El servidor respondió algo que no es JSON (HTTP ' + r.status + '): ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140));
+        err.name = 'BadResponse'; throw err;
+      }
     } finally { clearTimeout(t); }
   }
   Alm.api = api;
-  const isNet = (e) => !(e && e.name === 'SyntaxError');
+  const isNet = (e) => !(e && (e.name === 'SyntaxError' || e.name === 'BadResponse'));
 
   Alm.login = async (badge, pin) => {
     const res = await api('login', { badge, pin });
@@ -82,7 +86,7 @@
       else if (res.code === 'AUTH') { S.authLost = true; Alm.toast(res.error, 'bad'); }
       else Alm.toast(res.error || 'No se pudo actualizar.', 'bad');
     } catch (e) {
-      if (isNet(e)) { S.online = navigator.onLine; } else Alm.toast('El servidor respondió algo inesperado. Revisa la URL en config.js y que la implementación sea pública.', 'bad');
+      if (isNet(e)) { S.online = navigator.onLine; } else Alm.toast(e.message || 'El servidor respondió algo inesperado.', 'bad');
     }
     S.busy = false; Alm.render('soft');
   };
