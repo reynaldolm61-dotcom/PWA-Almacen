@@ -1,5 +1,5 @@
 /* Service worker: la app abre sin conexión. Cambia VERSION al publicar una versión nueva. */
-const VERSION = "alm-v1.0.2";
+const VERSION = "alm-v1.0.3";
 const SHELL = ["./", "index.html", "styles.css", "config.js", "demo.js", "core.js", "views.js", "manifest.webmanifest",
                "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", (e) => {
@@ -11,6 +11,13 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;   // la API nunca pasa por aquí
+  if (new URL(req.url).pathname.endsWith("/config.js")) {   // la configuración siempre se pide a la red primero
+    e.respondWith(fetch(req, { cache: "no-store" }).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
+      return res;
+    }).catch(() => caches.match(req, { ignoreSearch: true })));
+    return;
+  }
   e.respondWith(
     caches.match(req, { ignoreSearch: true }).then((hit) => {
       const net = fetch(req).then((res) => {

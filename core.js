@@ -56,7 +56,7 @@
       const r = await fetch(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctl.signal, redirect: 'follow' });
       const txt = await r.text();
       try { return JSON.parse(txt); } catch (e) {
-        const err = new Error('El servidor respondió algo que no es JSON (HTTP ' + r.status + '): ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140));
+        const err = new Error('El servidor respondió algo que no es JSON (HTTP ' + r.status + '): ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140) + ' | URL usada: ' + String(CFG.API_URL).slice(0, 70));
         err.name = 'BadResponse'; throw err;
       }
     } finally { clearTimeout(t); }
