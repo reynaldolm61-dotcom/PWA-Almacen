@@ -80,9 +80,10 @@
       <div class="who">${u ? esc(u.nombre) + '<br>' + esc(u.rol) : ''}</div>`;
   }
   const NAV = [['catalogo', 'Catálogo', I.box], ['mover', 'Mover', I.swap], ['prestamos', 'Préstamos', I.key], ['faltantes', 'Faltantes', I.alert], ['mas', 'Más', I.more]];
+  const NAV_LIM = [['catalogo', 'Catálogo', I.box], ['prestamos', 'Mis préstamos', I.key], ['movs', 'Mis movimientos', I.swap], ['mas', 'Más', I.more]];
   function navHtml() {
     const bad = S.data ? (S.data.loans || []).filter((l) => l.estado_prest === 'VENCIDO').length : 0;
-    return NAV.map(([k, t, ic]) => `<button data-act="nav" data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ic}${t}${k === 'prestamos' && bad ? `<span class="count">${bad}</span>` : ''}${k === 'mas' && nBad() ? '<span class="count">!</span>' : ''}</button>`).join('');
+    return (canWrite() ? NAV : NAV_LIM).map(([k, t, ic]) => `<button data-act="nav" data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ic}${t}${k === 'prestamos' && bad ? `<span class="count">${bad}</span>` : ''}${k === 'mas' && nBad() ? '<span class="count">!</span>' : ''}</button>`).join('');
   }
 
   Alm.render = function (mode) {
@@ -95,15 +96,19 @@
     }
     document.getElementById('top').innerHTML = headerHtml();
     document.getElementById('top').className = 'top' + (S.online ? '' : ' off');
+    if (!canWrite() && (S.view === 'mover' || S.view === 'faltantes')) S.view = 'catalogo';
+    if (canWrite() && S.view === 'movs') S.view = 'catalogo';
+    document.getElementById('nav').style.setProperty('--n', canWrite() ? 5 : 4);
     document.getElementById('nav').innerHTML = navHtml();
     if (mode === 'soft') {
       if (S.view === 'catalogo') refreshCatalog();
       else if (S.view === 'prestamos') viewPrestamos();
       else if (S.view === 'faltantes') viewFaltantes();
+      else if (S.view === 'movs') viewMovs();
       else if (S.view === 'mas') viewMas();
       return;
     }
-    ({ catalogo: viewCatalogo, mover: viewMover, prestamos: viewPrestamos, faltantes: viewFaltantes, mas: viewMas })[S.view]();
+    ({ catalogo: viewCatalogo, mover: viewMover, prestamos: viewPrestamos, faltantes: viewFaltantes, movs: viewMovs, mas: viewMas })[S.view]();
     window.scrollTo(0, 0);
   };
   const main = () => document.getElementById('main');
@@ -169,7 +174,7 @@
     const cnt = { todos: all.length, faltan: all.filter((i) => FALTAN.includes(i.estado)).length, prestados: all.filter((i) => i.prest > 0).length,
       excedente: all.filter((i) => i.estado === 'EXCEDENTE').length, equipos: all.filter((i) => RET.includes(i.tipo)).length };
     const labels = { todos: 'Todos', faltan: 'Faltan', prestados: 'Prestados', excedente: 'Excedente', equipos: 'Herramienta y equipos' };
-    document.getElementById('chips').innerHTML = Object.keys(labels).map((k) => `<button class="chip" data-act="chip" data-k="${k}" aria-pressed="${ui.chip === k}">${labels[k]} · ${cnt[k]}</button>`).join('');
+    document.getElementById('chips').innerHTML = Object.keys(labels).filter((k) => canWrite() || !['faltan', 'excedente'].includes(k)).map((k) => `<button class="chip" data-act="chip" data-k="${k}" aria-pressed="${ui.chip === k}">${labels[k]} · ${cnt[k]}</button>`).join('');
     const items = filterItems();
     document.getElementById('list').innerHTML = !S.data ? '<div class="empty">Sin datos todavía. Conéctate para descargar el catálogo.</div>'
       : items.length ? items.map(cardItem).join('') : '<div class="empty">No hay artículos con ese filtro.</div>';
@@ -180,21 +185,44 @@
     if (!i) return;
     const top = Math.max(1, i.max, i.rop, i.disp) * 1.15, pos = (v) => Math.min(100, (v / top) * 100).toFixed(1) + '%';
     const hist = ((S.data && S.data.recent) || []).filter((m) => m.cod === cod).slice(0, 5);
+    const W = canWrite();
+    const rows = [['Disponible', `<b class="num">${num(i.disp)} ${esc(i.unidad)}</b>${i.prest > 0 ? ` · prestado ${num(i.prest)}` : ''}`], ['Ubicación', esc(i.ubic || '–')], ['Categoría', esc(i.categoria || '–')]];
+    if (W) rows.push(['Criticidad', `<span class="crit ${esc(i.crit)}">${esc(i.crit)}</span>`], ['En tránsito', num(i.pend)], ['A pedir', i.sugerido > 0 ? '<b>' + num(i.sugerido) + '</b>' : '–'],
+      ['Cobertura', i.cobertura !== '' && i.cobertura != null ? num(i.cobertura) + ' días' : '–'], ['Entrega', num(i.lead) + ' días'], ['Proveedor', esc(i.prov || '–')], ['Costo', money(i.costo)]);
+    rows.push(['No. de parte', esc(i.no_parte || '–')], ['Aplica a', esc(i.aplica || '–')]);
+    if (i.obs) rows.push(['Notas', esc(i.obs)]);
     const sh = sheet(`<div class="row between"><div class="grow"><h2 style="margin:0">${esc(i.desc)}</h2><div class="code">${esc(i.cod)} · ${esc(i.tipo)}</div></div><div>${tag(i.estado)}</div></div>
-      ${i.max > 0 || i.min > 0 ? `<div class="gauge" style="margin-top:30px" aria-label="Existencia contra mínimo, reorden y máximo"><b style="width:${pos(i.disp)}"></b><i style="left:${pos(i.min)}" data-l="mín ${num(i.min)}"></i><i class="up" style="left:${pos(i.rop)}" data-l="reorden ${num(i.rop)}"></i><i style="left:${pos(i.max)}" data-l="máx ${num(i.max)}"></i></div>` : '<div style="height:12px"></div>'}
-      <div class="card"><dl>
-        <dt>Disponible</dt><dd><b class="num">${num(i.disp)} ${esc(i.unidad)}</b>${i.prest > 0 ? ` · prestado ${num(i.prest)}` : ''}</dd>
-        <dt>Ubicación</dt><dd>${esc(i.ubic || '–')}</dd><dt>Categoría</dt><dd>${esc(i.categoria || '–')}</dd>
-        <dt>Criticidad</dt><dd><span class="crit ${esc(i.crit)}">${esc(i.crit)}</span></dd>
-        <dt>En tránsito</dt><dd>${num(i.pend)}</dd><dt>A pedir</dt><dd>${i.sugerido > 0 ? '<b>' + num(i.sugerido) + '</b>' : '–'}</dd>
-        <dt>Cobertura</dt><dd>${i.cobertura !== '' && i.cobertura != null ? num(i.cobertura) + ' días' : '–'}</dd><dt>Entrega</dt><dd>${num(i.lead)} días</dd>
-        <dt>Proveedor</dt><dd>${esc(i.prov || '–')}</dd><dt>Costo</dt><dd>${money(i.costo)}</dd>
-        <dt>No. de parte</dt><dd>${esc(i.no_parte || '–')}</dd><dt>Aplica a</dt><dd>${esc(i.aplica || '–')}</dd>${i.obs ? `<dt>Notas</dt><dd>${esc(i.obs)}</dd>` : ''}</dl>
-        ${/^https?:\/\//.test(i.enlace || '') ? `<p><a class="btn sm" href="${esc(i.enlace)}" target="_blank" rel="noopener">Ver imagen o ficha técnica</a></p>` : ''}</div>
-      ${hist.length ? '<h3>Últimos movimientos</h3>' + hist.map((m) => `<div class="card small"><b>${esc(m.tipo)}</b> · ${num(m.cant)} ${esc(i.unidad)}<br><span class="muted">${date(m.fecha)} · ${esc(m.entrega || '–')} → ${esc(m.recibe || '–')}</span></div>`).join('') : ''}
-      ${canWrite() ? `<div class="row" style="margin-top:6px"><button class="btn primary grow" data-act="mv-item" data-cod="${esc(i.cod)}">Registrar movimiento</button><button class="btn" data-act="edit-item" data-cod="${esc(i.cod)}">Editar</button></div>
-        <button class="btn block" style="margin-top:8px" data-act="count-item" data-cod="${esc(i.cod)}">Contar este artículo</button>` : ''}
+      <div class="foto" id="foto-box" ${i.foto ? '' : 'hidden'}></div>
+      ${W && (i.max > 0 || i.min > 0) ? `<div class="gauge" style="margin-top:30px" aria-label="Existencia contra mínimo, reorden y máximo"><b style="width:${pos(i.disp)}"></b><i style="left:${pos(i.min)}" data-l="mín ${num(i.min)}"></i><i class="up" style="left:${pos(i.rop)}" data-l="reorden ${num(i.rop)}"></i><i style="left:${pos(i.max)}" data-l="máx ${num(i.max)}"></i></div>` : '<div style="height:12px"></div>'}
+      <div class="card"><dl>${rows.map(([k, val]) => `<dt>${k}</dt><dd>${val}</dd>`).join('')}</dl>
+        ${/^https?:\/\//.test(i.enlace || '') ? `<p><a class="btn sm" href="${esc(i.enlace)}" target="_blank" rel="noopener">Ver ficha técnica</a></p>` : ''}</div>
+      ${hist.length ? '<h3>' + (W ? 'Últimos movimientos' : 'Tus movimientos de este artículo') + '</h3>' + hist.map((m) => `<div class="card small"><b>${esc(m.tipo)}</b> · ${num(m.cant)} ${esc(i.unidad)}<br><span class="muted">${date(m.fecha)} · ${esc(m.entrega || '–')} → ${esc(m.recibe || '–')}</span></div>`).join('') : ''}
+      ${W ? `<div class="row" style="margin-top:6px"><button class="btn primary grow" data-act="mv-item" data-cod="${esc(i.cod)}">Registrar movimiento</button><button class="btn" data-act="edit-item" data-cod="${esc(i.cod)}">Editar</button></div>
+        <button class="btn block" style="margin-top:8px" data-act="count-item" data-cod="${esc(i.cod)}">Contar este artículo</button>
+        <label class="btn block" style="margin-top:8px" id="foto-lbl">${I.scan}<span id="foto-txt">${i.foto ? 'Cambiar foto' : 'Agregar foto'}</span><input type="file" accept="image/*" id="foto-in" hidden></label>` : ''}
       <button class="btn block" style="margin-top:8px" data-act="close">Cerrar</button>`);
+    const box = sh.el.querySelector('#foto-box');
+    const showPhoto = async () => {
+      if (!i.foto) return;
+      box.hidden = false; box.innerHTML = '<div class="small muted">Cargando foto…</div>';
+      let d = null; try { d = await Alm.photo(i.cod, i.foto); } catch (e) { d = null; }
+      box.innerHTML = d ? `<img src="${d}" alt="Foto de ${esc(i.desc)}">` : '<div class="small muted">La foto no está disponible sin conexión.</div>';
+    };
+    showPhoto();
+    const fin = sh.el.querySelector('#foto-in');
+    if (fin) fin.addEventListener('change', async () => {
+      const f = fin.files && fin.files[0]; if (!f) return;
+      const txt = sh.el.querySelector('#foto-txt');
+      if (!S.online) { Alm.toast('Necesitas conexión para subir la foto.', 'bad'); fin.value = ''; return; }
+      try {
+        txt.textContent = 'Subiendo foto…';
+        const data = await Alm.shrinkImage(f, 800);
+        const r = await Alm.savePhoto(i.cod, data);
+        if (r.ok) { Alm.toast('Foto guardada en Drive', 'ok'); txt.textContent = 'Cambiar foto'; showPhoto(); }
+        else { Alm.toast(r.error || 'No se pudo guardar la foto.', 'bad'); txt.textContent = i.foto ? 'Cambiar foto' : 'Agregar foto'; }
+      } catch (e) { Alm.toast('No se pudo subir la foto: ' + (e && e.message ? e.message : 'error'), 'bad'); txt.textContent = i.foto ? 'Cambiar foto' : 'Agregar foto'; }
+      fin.value = '';
+    });
     return sh;
   }
 
@@ -335,9 +363,9 @@
   /* ---------- préstamos y faltantes ---------- */
   function viewPrestamos() {
     const loans = ((S.data && S.data.loans) || []).slice().sort((a, b) => (b.estado_prest === 'VENCIDO') - (a.estado_prest === 'VENCIDO') || String(a.compromiso).localeCompare(String(b.compromiso)));
-    main().innerHTML = `<h2>Préstamos abiertos <span class="muted">(${loans.length})</span></h2>` + (loans.length ? loans.map((l) => `<div class="card"><div class="row between"><div class="grow"><div class="title">${esc(l.desc)}</div><div class="code">${esc(l.folio)} · ${esc(l.cod)}</div></div>${tag(l.estado_prest)}</div>
+    main().innerHTML = `<h2>${canWrite() ? 'Préstamos abiertos' : 'Mis préstamos'} <span class="muted">(${loans.length})</span></h2>` + (loans.length ? loans.map((l) => `<div class="card"><div class="row between"><div class="grow"><div class="title">${esc(l.desc)}</div><div class="code">${esc(l.folio)} · ${esc(l.cod)}</div></div>${tag(l.estado_prest)}</div>
       <div class="small" style="margin-top:8px"><b>Lo tiene:</b> ${esc(l.recibe || '–')}${l.area ? ' · ' + esc(l.area) : ''}<br><span class="muted">Salió ${date(l.fecha)} · debe volver ${date(l.compromiso)}${l.dias !== '' && l.dias != null ? ' · ' + num(l.dias) + ' días fuera' : ''}</span></div>
-      ${canWrite() ? `<button class="btn sm" style="margin-top:10px" data-act="devolver" data-folio="${esc(l.folio)}">Registrar devolución</button>` : ''}</div>`).join('') : '<div class="empty">No hay préstamos abiertos.</div>') + `<p class="sync">${ago()}</p>`;
+      ${canWrite() ? `<button class="btn sm" style="margin-top:10px" data-act="devolver" data-folio="${esc(l.folio)}">Registrar devolución</button>` : ''}</div>`).join('') : (canWrite() ? '<div class="empty">No hay préstamos abiertos.</div>' : '<div class="empty">No tienes herramienta, llaves ni equipos en préstamo.</div>')) + `<p class="sync">${ago()}</p>`;
   }
   function viewFaltantes() {
     const f = (S.data && S.data.shortages) || [];
@@ -356,16 +384,22 @@
     main().innerHTML = `<h2>Más</h2>
       ${canWrite() ? `<div class="card tap" data-act="count"><b>Conteo físico</b><div class="small muted">Compara lo que hay en el estante contra el sistema</div></div>
       <div class="card tap" data-act="new-item"><b>Dar de alta un artículo</b><div class="small muted">Nuevo repuesto, herramienta, llave o equipo</div></div>` : ''}
-      <div class="card tap" data-act="historial"><b>Historial reciente</b><div class="small muted">Últimos movimientos registrados</div></div>
-      <div class="card tap" data-act="pendientes"><b>Pendientes de envío ${pend + bad ? `<span class="tag ${bad ? 't-bad' : 't-warn'}">${pend + bad}</span>` : ''}</b><div class="small muted">Lo que se guardó sin conexión${bad ? ' · hay registros rechazados' : ''}</div></div>
+      ${canWrite() ? `<div class="card tap" data-act="historial"><b>Historial reciente</b><div class="small muted">Últimos movimientos registrados</div></div>` : ''}
+      ${canWrite() ? `<div class="card tap" data-act="pendientes"><b>Pendientes de envío ${pend + bad ? `<span class="tag ${bad ? 't-bad' : 't-warn'}">${pend + bad}</span>` : ''}</b><div class="small muted">Lo que se guardó sin conexión${bad ? ' · hay registros rechazados' : ''}</div></div>` : ''}
       <div class="card tap" data-act="refresh"><b>Actualizar ahora</b><div class="small muted">${ago()}</div></div>
       ${Alm.cfg.API_URL === 'DEMO' ? '<div class="card tap" data-act="demo-reset"><b>Restablecer datos de demostración</b></div>' : ''}
       <div class="card tap" data-act="logout"><b>Cerrar sesión</b><div class="small muted">${esc(me().nombre)} · ${esc(me().rol)}</div></div>
       <p class="sync">Versión ${esc((S.data && S.data.version) || '')}${Alm.cfg.API_URL === 'DEMO' ? ' · modo demostración' : ''}</p>`;
   }
+  const cardMov = (m) => `<div class="card small"><div class="row between"><b>${esc(m.tipo)}</b><span class="code">${esc(m.folio)}</span></div>${esc(m.desc)} · <b>${num(m.cant)}</b><br><span class="muted">${date(m.fecha)} · ${esc(m.entrega || '–')} → ${esc(m.recibe || '–')}</span>${m.valid && m.valid !== 'OK' ? `<div style="color:var(--bad);font-weight:700">⚠ ${esc(m.valid)}</div>` : ''}</div>`;
+  function viewMovs() {
+    const r = (S.data && S.data.recent) || [];
+    main().innerHTML = `<h2>Mis movimientos <span class="muted">(${r.length})</span></h2><p class="small muted" style="margin-top:-6px">Entregas, devoluciones y préstamos en los que participaste.</p>` +
+      (r.length ? r.map(cardMov).join('') : '<div class="empty">Todavía no hay movimientos a tu nombre.</div>') + `<p class="sync">${ago()}</p>`;
+  }
   function openHistorial() {
     const r = (S.data && S.data.recent) || [];
-    sheet(`<h2 style="margin-top:0">Historial reciente</h2>${r.length ? r.map((m) => `<div class="card small"><div class="row between"><b>${esc(m.tipo)}</b><span class="code">${esc(m.folio)}</span></div>${esc(m.desc)} · <b>${num(m.cant)}</b><br><span class="muted">${date(m.fecha)} · ${esc(m.entrega || '–')} → ${esc(m.recibe || '–')}</span>${m.valid && m.valid !== 'OK' ? `<div style="color:var(--bad);font-weight:700">⚠ ${esc(m.valid)}</div>` : ''}</div>`).join('') : '<div class="empty">Sin movimientos.</div>'}<button class="btn block" data-act="close">Cerrar</button>`);
+    sheet(`<h2 style="margin-top:0">Historial reciente</h2>${r.length ? r.map(cardMov).join('') : '<div class="empty">Sin movimientos.</div>'}<button class="btn block" data-act="close">Cerrar</button>`);
   }
   function openPendientes() {
     const q = S.queue;

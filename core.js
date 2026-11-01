@@ -91,6 +91,57 @@
     S.busy = false; Alm.render('soft');
   };
 
+  /* ---------- fotos de artículos (viven en Drive, se guardan en el celular al verlas) ---------- */
+  const FOTOS = 'alm-fotos', photoMem = {};
+  const fkey = (cod, ts) => 'foto/' + encodeURIComponent(cod) + '?v=' + ts;
+  async function putPhoto(cod, ts, data) {
+    photoMem[fkey(cod, ts)] = data;
+    try {
+      if (!window.caches) return;
+      const c = await caches.open(FOTOS);
+      for (const k of await c.keys()) { if (k.url.includes('/foto/' + encodeURIComponent(cod) + '?')) await c.delete(k); }
+      await c.put(fkey(cod, ts), new Response(data));
+    } catch (e) { /* sin almacenamiento: se queda en memoria */ }
+  }
+  Alm.photo = async (cod, ts) => {
+    const k = fkey(cod, ts);
+    if (photoMem[k]) return photoMem[k];
+    try { if (window.caches) { const hit = await (await caches.open(FOTOS)).match(k); if (hit) return (photoMem[k] = await hit.text()); } } catch (e) { /* sigue */ }
+    if (!S.online) return null;
+    const r = await api('photo_get', { cod });
+    if (!r.ok) return null;
+    await putPhoto(cod, r.ts, r.data);
+    return r.data;
+  };
+  Alm.savePhoto = async (cod, data) => {
+    const r = await api('photo_save', { cod, data });
+    if (r.ok) {
+      const it = Alm.items().find((x) => x.cod === cod);
+      if (it) it.foto = r.ts;
+      await putPhoto(cod, r.ts, data);
+      store.set('alm.data', S.data);
+    }
+    return r;
+  };
+  /** Reduce la foto a 800 px y JPG para que pese ~80 KB y suba rápido. */
+  Alm.shrinkImage = async (file, max) => {
+    max = max || 800;
+    let src, w, h, done = () => {};
+    if (window.createImageBitmap) {
+      try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); w = src.width; h = src.height; } catch (e) { src = null; }
+    }
+    if (!src) {
+      const url = URL.createObjectURL(file);
+      src = await new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => no(new Error('No se pudo leer la imagen.')); im.src = url; });
+      w = src.naturalWidth; h = src.naturalHeight; done = () => URL.revokeObjectURL(url);
+    }
+    const k = Math.min(1, max / Math.max(w, h));
+    const cv = document.createElement('canvas'); cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(src, 0, 0, cv.width, cv.height);
+    done();
+    return cv.toDataURL('image/jpeg', 0.72);
+  };
+
   /* ---------- cola sin conexión ---------- */
   const persistQ = () => store.set('alm.queue', S.queue);
   const ACTION = { movement: ['movement', 'op'], count: ['count', 'op'], item: ['item_save', 'item'] };

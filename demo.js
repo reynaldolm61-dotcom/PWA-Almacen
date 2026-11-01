@@ -65,10 +65,17 @@
     const shortages = db.items.filter((i) => s[i.estado]).sort((a, b) => w[b.crit] - w[a.crit] || s[b.estado] - s[a.estado])
       .map((i, n) => ({ n: n + 1, cod: i.cod, desc: i.desc, crit: i.crit, estado: i.estado, disp: i.disp, pend: i.pend, sugerido: i.sugerido, unidad: i.unidad,
                         prov: i.prov, contacto: i.prov ? 'Contacto Ejemplo' : '', tel: i.prov ? '000 000 0000' : '', correo: i.prov ? 'ventas@ejemplo.com' : '', lead: i.lead, repos: i.sugerido * i.costo }));
-    return { ok: true, version: 'demo', today: iso(new Date()), user: { badge: u.badge, nombre: u.nombre, rol: u.rol, area: u.area, canWrite: ['Almacenista', 'Supervisor'].includes(u.rol) },
-      items: db.items, people: db.people.map((p) => ({ badge: p.badge, nombre: p.nombre, rol: p.rol })), pos: db.pos.filter((p) => p.pendiente > 0),
-      providers: [{ id: 'PRV-0001', nombre: 'Proveedor Ejemplo, S.A.' }], loans: db.movs.filter((m) => m.estado_prest === 'En préstamo' || m.estado_prest === 'VENCIDO'),
-      shortages, recent: db.movs.slice(-40).reverse(),
+    const lim = !['Almacenista', 'Supervisor'].includes(u.rol);
+    const bOf = (n) => { const p = db.people.find((x) => x.nombre === n); return p ? p.badge : ''; };
+    const movs = db.movs.map((m) => Object.assign({}, m, { entrega_b: bOf(m.entrega), recibe_b: bOf(m.recibe) }))
+      .filter((m) => !lim || m.entrega_b === u.badge || m.recibe_b === u.badge);
+    const photos = db.photos || {};
+    let items = db.items.map((i) => Object.assign({}, i, { foto: photos[i.cod] ? photos[i.cod].ts : 0 }));
+    if (lim) items = items.map((i) => { const o = Object.assign({}, i); ['costo', 'prov_id', 'prov', 'sugerido', 'lead', 'min', 'rop', 'max', 'pend', 'cobertura'].forEach((k) => delete o[k]); return o; });
+    return { ok: true, version: 'demo', today: iso(new Date()), user: { badge: u.badge, nombre: u.nombre, rol: u.rol, area: u.area, canWrite: !lim },
+      items, people: db.people.filter((p) => !lim || p.badge === u.badge).map((p) => ({ badge: p.badge, nombre: p.nombre, rol: p.rol })), pos: lim ? [] : db.pos.filter((p) => p.pendiente > 0),
+      providers: lim ? [] : [{ id: 'PRV-0001', nombre: 'Proveedor Ejemplo, S.A.' }], loans: movs.filter((m) => m.estado_prest === 'En préstamo' || m.estado_prest === 'VENCIDO'),
+      shortages: lim ? [] : shortages, recent: movs.slice(-40).reverse(),
       lists: { tipos: TIPOS, areas: ['Mantenimiento', 'Producción', 'Calidad', 'Logística', 'Ingeniería', 'Seguridad e higiene', 'Almacén', 'Compras', 'Otros'],
                condiciones: ['Buena', 'Con desgaste', 'Dañado', 'Incompleto', 'No aplica'], categorias: ['Hidráulico', 'Neumático', 'Eléctrico', 'Filtros', 'Sellos y empaques', 'Mangueras y conexiones', 'Lubricantes y fluidos', 'Herramienta manual', 'Llaves de acceso', 'Montacargas', 'Plataformas elevadoras', 'Otros'],
                unidades: ['pza', 'par', 'juego', 'kit', 'm', 'L', 'kg', 'ml', 'caja', 'rollo', 'galón'], tiposArt: ['Repuesto', 'Consumible', 'Herramienta', 'Llave', 'Equipo pesado'] } };
@@ -116,6 +123,14 @@
     const u = person(String(b.token || '').split('.')[1]);
     if (!u) return err('Sesión vencida. Entra de nuevo.', 'AUTH');
     if (b.action === 'bootstrap') return boot(u);
+    if (b.action === 'photo_get') { const f = (db.photos || {})[b.cod]; return f ? { ok: true, ts: f.ts, data: f.data } : err('Este artículo no tiene foto.', 'NOFOTO'); }
+    if (b.action === 'photo_save') {
+      if (!['Almacenista', 'Supervisor'].includes(u.rol)) return err('Tu rol es de solo consulta.', 'FORBIDDEN');
+      if (!db.items.some((x) => x.cod === b.cod)) return err('Ese código no está en el catálogo.', 'VALIDATION');
+      if (!String(b.data || '').startsWith('data:image/jpeg;base64,')) return err('La foto debe ser JPG.', 'VALIDATION');
+      db.photos = db.photos || {}; db.photos[b.cod] = { ts: Date.now(), data: b.data }; save();
+      return { ok: true, ts: db.photos[b.cod].ts };
+    }
     if (b.action === 'movement') return movement(u, b.op || {});
     if (b.action === 'count') {
       const i = db.items.find((x) => x.cod === (b.op || {}).cod);
