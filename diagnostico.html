@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnóstico de conexión</title>
+<style>
+  :root { --bg:#f3f5f8; --card:#fff; --ink:#16202e; --muted:#596678; --line:#d5dce5; --ok:#1e7a46; --bad:#b42318; --btn:#1f3864; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e151e; --card:#17212d; --ink:#e8edf3; --muted:#9eabbb; --line:#2c3a4b; --ok:#6fd69a; --bad:#ff9c92; --btn:#6b96e0; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; padding:18px; }
+  main { max-width:640px; margin:0 auto; }
+  h1 { font-size:22px; margin:6px 0 4px; } p { color:var(--muted); margin:0 0 14px; }
+  input { width:100%; box-sizing:border-box; padding:13px; border:1.5px solid var(--line); border-radius:12px; background:var(--card); color:var(--ink); font:inherit; }
+  button { width:100%; margin:12px 0; min-height:52px; border:0; border-radius:12px; background:var(--btn); color:#fff; font:inherit; font-weight:700; }
+  .r { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 14px; margin-bottom:10px; }
+  .r b.ok { color:var(--ok); } .r b.bad { color:var(--bad); } .r small { display:block; color:var(--muted); margin-top:6px; overflow-wrap:anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Diagnóstico de conexión</h1>
+  <p>Pega la URL de la aplicación web de Apps Script (termina en /exec) y pulsa Probar. La prueba corre en este navegador, igual que la app.</p>
+  <input id="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://script.google.com/macros/s/.../exec">
+  <button id="go">Probar</button>
+  <div id="out"></div>
+</main>
+<script src="config.js" onerror="void 0"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const urlBox = $('url'), out = $('out');
+  if (window.APP_CONFIG && /^https?:/.test(window.APP_CONFIG.API_URL || '')) urlBox.value = window.APP_CONFIG.API_URL;
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const add = (ok, title, detail, raw) => {
+    out.insertAdjacentHTML('beforeend', `<div class="r"><b class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${esc(title)}</b><div>${esc(detail || '')}</div>${raw ? `<small>${esc(raw)}</small>` : ''}</div>`);
+    return ok;
+  };
+  const snippet = (t) => { const m = t.match(/<title>([^<]*)<\/title>/i); return (m ? 'Título de la página: ' + m[1] : t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 160); };
+  const looksLogin = (t) => /accounts\.google\.com|ServiceLogin|Sign in|Iniciar sesi[oó]n/i.test(t);
+
+  async function run() {
+    out.innerHTML = '';
+    const url = urlBox.value.trim();
+    if (!url) return add(false, 'Falta la URL', 'Pégala en el campo de arriba.');
+    if (/docs\.google\.com\/spreadsheets/.test(url)) return add(false, 'Esa es la URL del libro', 'Necesitas la URL de la aplicación web de Apps Script: Implementar → Administrar implementaciones → URL de la aplicación web.');
+    if (/\/dev(\?.*)?$/.test(url)) return add(false, 'La URL termina en /dev', 'Esa es la versión de prueba. Usa la que termina en /exec.');
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(url)) add(false, 'La URL no tiene el formato esperado', 'Debe ser https://script.google.com/macros/s/…/exec, sin espacios. Si tu cuenta de Google de empresa la generó, puede incluir /a/dominio/ y aun así funcionar.');
+    else add(true, 'Formato de URL correcto');
+
+    // 1) GET
+    let getOk = false;
+    try {
+      const r = await fetch(url, { method: 'GET', redirect: 'follow' });
+      const t = await r.text();
+      let j = null; try { j = JSON.parse(t); } catch (e) { /* no era JSON */ }
+      if (j && j.ok && j.app === 'almacen') { getOk = add(true, 'El servidor responde (GET)', 'Versión ' + j.version + '. La URL y el acceso público están bien.'); }
+      else if (looksLogin(t)) add(false, 'Google pide iniciar sesión', 'El acceso de la implementación no es "Cualquier persona", o está en "Ejecutar como: usuario que accede". Corrígelo: Implementar → Administrar implementaciones → lápiz → Ejecutar como: Yo; Acceso: Cualquier persona → Versión nueva → Implementar.', snippet(t));
+      else if (/autoriz/i.test(t)) add(false, 'El script necesita autorización', 'En el libro abre el menú Almacén → Probar la API y acepta los permisos (Avanzado → Ir a tu proyecto).', snippet(t));
+      else if (/doGet/i.test(t)) add(false, 'No existe la función doGet', 'Code.gs no está pegado o guardado en el proyecto de Apps Script, o falta una versión nueva de la implementación.', snippet(t));
+      else add(false, 'La respuesta no es la del servidor de almacén', 'Recibió algo distinto a lo esperado.', snippet(t));
+    } catch (e) {
+      add(false, 'No se pudo leer la respuesta (GET)', 'El navegador bloqueó la llamada. Casi siempre es porque Google redirige a una página de inicio de sesión (acceso no público) o porque la URL no es de una implementación publicada.', String(e));
+    }
+
+    // 2) POST como la app
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'login', badge: '000000', pin: '0' }), redirect: 'follow' });
+      const t = await r.text();
+      let j = null; try { j = JSON.parse(t); } catch (e) { /* no era JSON */ }
+      if (j && typeof j.ok === 'boolean') add(true, 'El inicio de sesión responde (POST)', j.ok ? 'Respuesta inesperada, pero válida.' : 'Respuesta del servidor: "' + (j.error || '') + '". Es normal: se probó con un badge falso.');
+      else if (looksLogin(t)) add(false, 'El POST también pide iniciar sesión', 'Mismo problema de acceso público que arriba.', snippet(t));
+      else add(false, 'El POST no devolvió JSON', 'El script puede tener un error. Abre Apps Script → Ejecuciones y revisa el último error.', snippet(t));
+    } catch (e) {
+      add(false, 'El POST fue bloqueado', getOk ? 'El GET funciona pero el POST no: revisa que Code.gs esté completo (función doPost) y que hayas publicado una versión nueva de la implementación.' : 'Mismo origen del problema que el GET.', String(e));
+    }
+    out.insertAdjacentHTML('beforeend', '<p>Si todo salió en verde pero la app sigue sin conectar, borra los datos del sitio en el navegador y vuelve a abrirla: puede tener guardada la copia anterior de config.js.</p>');
+  }
+  $('go').addEventListener('click', run);
+})();
+</script>
+</body>
+</html>
